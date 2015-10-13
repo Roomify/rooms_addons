@@ -1,0 +1,8 @@
+name = Rooms Addons
+description = Rooms Addons.
+core = 7.x
+php = 5.3.9
+
+package = Rooms
+
+dependencies[] = rooms

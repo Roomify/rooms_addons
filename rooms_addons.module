@@ -1,0 +1,257 @@
+<?php
+
+/**
+ * @file
+ * Main hooks and API functions for Rooms Addons module.
+ */
+
+module_load_include('inc', 'rooms_addons', 'rooms_addons.field');
+
+/**
+ * Implements hook_menu().
+ */
+function rooms_addons_menu() {
+  $items = array();
+
+  $items['rooms_addons/autocomplete'] = array(
+    'title' => 'Entity Reference Autocomplete',
+    'page callback' => 'rooms_addons_autocomplete_callback',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+  );
+
+  return $items;
+}
+
+function rooms_addons_autocomplete_callback($string = '') {
+  $query = new EntityFieldQuery;
+
+  $query->entityCondition('entity_type', 'commerce_product');
+  $query->propertyCondition('type', 'rooms_addons', '=');
+
+  $query->addTag('commerce_product_access');
+
+  $query
+    ->propertyOrderBy('sku')
+    ->propertyOrderBy('title')
+    ->propertyOrderBy('type');
+
+  $query->range(0, 10);
+
+  $entities = $query->execute();
+
+  $matches = array();
+
+  if (isset($entities['commerce_product'])) {
+    $pids = array_keys($entities['commerce_product']);
+
+    // EntityFieldQuery doesn't return sku and title, so we have to load again.
+    $products = commerce_product_load_multiple($pids);
+    foreach ($products AS $product) {
+      $matches[$product->sku] = array(
+        t('@sku: @title', array('@sku' => $product->sku, '@title' => $product->title)),
+      );
+    }
+  }
+
+  drupal_json_output($matches);
+}
+
+/**
+ * Implements hook_entity_insert().
+ */
+function rooms_addons_entity_insert($entity, $type) {
+  if ($type == 'rooms_unit_type') {
+
+    // Create field ('rooms_addons_unit_addons') if not exist.
+    if (field_read_field('rooms_addons_unit_addons') === FALSE) {
+      $field = array(
+        'field_name' => 'rooms_addons_unit_addons',
+        'type' => 'rooms_addons',
+        'cardinality' => -1,
+      );
+      field_create_field($field);
+    }
+
+    if (field_read_instance('rooms_unit', 'rooms_addons_unit_addons', $entity->type) === FALSE) {
+      // Create the instance on the bundle.
+      $instance = array(
+        'field_name' => 'rooms_addons_unit_addons',
+        'entity_type' => 'rooms_unit',
+        'label' => 'Addons',
+        'bundle' => $entity->type,
+        'required' => FALSE,
+        'widget' => array(
+          'type' => 'rooms_addons',
+        ),
+      );
+      field_create_instance($instance);
+    }
+  }
+}
+
+/**
+ * Implements hook_commerce_product_type_info().
+ */
+function rooms_addons_commerce_product_type_info() {
+  $product_types = array();
+
+  $product_types['rooms_addons'] = array(
+    'type' => 'rooms_addons',
+    'name' => t('Rooms Addons'),
+    'description' => t('Rooms Addons.'),
+  );
+
+  return $product_types;
+}
+
+/**
+ * Implements hook_element_info().
+ */
+function rooms_addons_element_info() {
+  $elements = array();
+
+  $elements['rooms_addons_element'] = array(
+    '#input' => TRUE,
+    '#process' => array('rooms_addons_element_process'),
+  );
+
+  return $elements;
+}
+
+/**
+ * Generates the 'rooms_addons_element' Form API element.
+ */
+function rooms_addons_element_process($element, $form_state, $complete_form) {
+  $delta = $element['#delta'];
+
+  $field_parents = $element['#field_parents'];
+  $field_name = $element['#field_name'];
+  $language = $element['#language'];
+
+  $parents = array_merge($field_parents, array($field_name, $language, $delta));
+
+  $product_sku = NULL;
+  if (isset($element['#default_value']['product_id'])) {
+    $product = commerce_product_load($element['#default_value']['product_id']);
+    $product_sku = $product->sku;
+  }
+
+  $element['product_id'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Product Name'),
+    '#default_value' => $product_sku,
+    '#attributes' => array(
+      'class' => array('rooms-addon--name'),
+    ),
+    '#autocomplete_path' => 'rooms_addons/autocomplete',
+    '#ajax' => array(
+      'wrapper' => 'addons-price-' . $delta,
+      'callback' => 'rooms_addons_form_ajax_callback',
+    ),
+  );
+
+  $element['quantity'] = array(
+    '#type' => 'select',
+    '#title' => t('Quantity'),
+    '#options' => rooms_assoc_range(1, 10),
+    '#default_value' => isset($element['#value']['quantity']) ? $element['#value']['quantity'] : NULL,
+    '#description' => t('How many of this option should be available'),
+    '#attributes' => array(
+      'class' => array('rooms-addon--quantity'),
+    ),
+  );
+
+  $price_options = rooms_price_options_options();
+  $element['operation'] = array(
+    '#type' => 'select',
+    '#title' => t('Operation'),
+    '#options' => $price_options,
+    '#default_value' => isset($element['#value']['operation']) ? $element['#value']['operation'] : NULL,
+    '#attributes' => array(
+      'class' => array('rooms-addon--operation'),
+    ),
+  );
+
+  if (isset($product->language) && isset($product->commerce_price[$product->language][0]['amount'])) {
+    $price = commerce_currency_format($product->commerce_price[$product->language][0]['amount'], $product->commerce_price[$product->language][0]['currency_code']);
+  }
+
+  $element['value'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Value'),
+    '#size' => 10,
+    '#value' => isset($product->commerce_price[LANGUAGE_NONE][0]['amount']) ? $price : NULL,
+    '#disabled' => TRUE,
+    '#attributes' => array(
+      'class' => array('rooms-addon--value'),
+    ),
+  );
+
+  $element['value']['#prefix'] = '<div id="addons-price-' . $delta . '">';
+  $element['value']['#suffix'] = '</div>';
+
+  $type_options = array(
+    ROOMS_OPTION_OPTIONAL => t('Optional'),
+    ROOMS_OPTION_MANDATORY => t('Mandatory'),
+    ROOMS_OPTION_ONREQUEST => t('On Request'),
+  );
+  $element['type'] = array(
+    '#type' => 'select',
+    '#title' => t('Type'),
+    '#options' => $type_options,
+    '#default_value' => isset($element['#value']['type']) ? $element['#value'] : 'optional',
+    '#attributes' => array(
+      'class' => array('rooms-addon--type'),
+    ),
+  );
+
+  $element['remove'] = array(
+    '#delta' => $delta,
+    '#name' => implode('_', $parents) . '_remove_button',
+    '#type' => 'submit',
+    '#value' => t('Remove'),
+    '#validate' => array(),
+    '#submit' => array('rooms_options_remove_submit'),
+    '#limit_validation_errors' => array(),
+    '#ajax' => array(
+      'path' => 'rooms_options/ajax',
+      'effect' => 'fade',
+    ),
+    '#attributes' => array(
+      'class' => array('rooms-option--remove-button'),
+    ),
+  );
+
+  $element['#element_validate'][] = 'rooms_addons_field_widget_form_validate';
+
+  return $element;
+}
+
+/**
+ *
+ */
+function rooms_addons_form_ajax_callback($form, &$form_state) {
+  $field_name = $form_state['triggering_element']['#parents'][0];
+  $language = $form_state['triggering_element']['#parents'][1];
+  $delta = $form_state['triggering_element']['#parents'][2];
+
+  return $form[$field_name][$language][$delta]['value'];
+}
+
+/**
+ *
+ */
+function rooms_addons_field_widget_form_validate($element, &$form_state) {
+  if (isset($element['#value']['product_id']) && !empty($element['#value']['product_id'])) {
+    $product = commerce_product_load_by_sku($element['#value']['product_id']);
+
+    if ($product !== FALSE) {
+      $parents = array_merge($element['#parents'], array('product_id'));
+      drupal_array_set_nested_value($form_state['values'], $parents, $product->product_id, TRUE);
+    }
+  }
+
+  $parents = array_merge($element['#parents'], array('value'));
+  drupal_array_set_nested_value($form_state['values'], $parents, 0, TRUE);
+}

@@ -1,0 +1,88 @@
+<?php
+
+/**
+ * @file
+ * Install, update and uninstall functions for the rooms_addons module.
+ */
+
+/**
+ * Implements hook_install().
+ */
+function rooms_addons_install() {
+  rooms_addons_install_create_addons_field();
+}
+
+/**
+ * Implements hook_uninstall().
+ */
+function rooms_addons_uninstall() {
+  // Delete addons field.
+  field_delete_field('rooms_addons_unit_addons');
+}
+
+/**
+ * Implements hook_field_schema().
+ */
+function rooms_addons_field_schema($field) {
+  if ($field['type'] == 'rooms_addons') {
+    return array(
+      'columns' => array(
+        'product_id' => array(
+          'type' => 'int',
+          'not null' => TRUE,
+        ),
+        'quantity' => array(
+          'type' => 'int',
+          'not null' => FALSE,
+        ),
+        'operation' => array(
+          'type' => 'varchar',
+          'length' => 255,
+          'not null' => FALSE,
+        ),
+        'value' => array(
+          'type' => 'float',
+          'not null' => FALSE,
+        ),
+        'type' => array(
+          'type' => 'varchar',
+          'length' => 255,
+          'not null' => FALSE,
+        ),
+      ),
+    );
+  }
+}
+
+/**
+ * Creates rooms_addons_unit_addons field for bookable unit type entities.
+ */
+function rooms_addons_install_create_addons_field() {
+  if (field_read_field('rooms_addons_unit_addons') === FALSE) {
+    // Create field 'rooms_addons_unit_addons'.
+    $field = array(
+      'field_name' => 'rooms_addons_unit_addons',
+      'type' => 'rooms_addons',
+      'cardinality' => FIELD_CARDINALITY_UNLIMITED,
+    );
+    field_create_field($field);
+  }
+
+  cache_clear_all();
+  field_cache_clear();
+
+  // Attach field 'rooms_addons_unit_addons' to instances of rooms_unit_type.
+  if (field_info_instance('rooms_unit_type', 'rooms_addons_unit_addons', 'rooms_unit_type') === NULL) {
+    $instance = array(
+      'field_name' => 'rooms_addons_unit_addons',
+      'entity_type' => 'rooms_unit_type',
+      'label' => 'Addons',
+      'bundle' => 'rooms_unit_type',
+      'required' => FALSE,
+      'widget' => array(
+        'type' => 'rooms_addons',
+      ),
+    );
+    field_create_instance($instance);
+  }
+}
